@@ -1,0 +1,22 @@
+
+
+/*
+export default definePlugin({
+    name: "CustomEffects",
+    description: "Custom profile effects",
+    author: [Developers.SerStars],
+    id: "customeffects",
+    version: "2.1.0",
+
+    async start() {
+        await loadAllEffectData();
+
+        patchGetUserProfile();
+        patchGetAllProfileEffects();
+        patchGetProfileEffect();
+    },
+
+    stop() {},
+    settings: Settings
+});
+*/

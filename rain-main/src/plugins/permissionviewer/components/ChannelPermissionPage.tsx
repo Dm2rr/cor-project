@@ -1,0 +1,143 @@
+import { rawColors, semanticColors } from "@api/ui/components/color";
+import { hideSheet } from "@api/ui/sheets";
+import { findByNameLazy } from "@metro";
+import { ActionSheet, Text } from "@metro/common/components";
+import { ChannelStore, GuildMemberStore, GuildRoleStore, UserStore } from "@metro/common/stores";
+import React from "react";
+import { Image, Pressable, ScrollView, View } from "react-native";
+
+import { formatPermName, hasBits, hexToRgba, OVERWRITE_PERMISSIONS, parsePermissionOverwrites, PERMISSIONS, roleColorHex } from "../lib/permissions";
+import SheetHeader from "./SheetHeader";
+
+const showUserProfile = findByNameLazy("showUserProfileActionSheet");
+
+function getPermsFromOverwrite(ow: any) {
+    const allowed = OVERWRITE_PERMISSIONS.filter(p => hasBits(ow.allow, PERMISSIONS[p]));
+    const denied = OVERWRITE_PERMISSIONS.filter(p => hasBits(ow.deny, PERMISSIONS[p]));
+    return { allowed, denied };
+}
+
+export default function ChannelPermsView({ channelId }: { channelId: string }) {
+    const channel = ChannelStore?.getChannel?.(channelId);
+    if (!channel) return null;
+    const guildId = channel.guild_id;
+    if (!guildId) {
+        return (
+            <ActionSheet>
+                <SheetHeader title={channel.name} onClose={() => hideSheet("permissionviewer-channel-" + channelId)} />
+                <View style={{ padding: 16, alignItems: "center" }}>
+                    <Text variant="text-md/medium">Channel is not in a server</Text>
+                </View>
+            </ActionSheet>
+        );
+    }
+
+    const roles: any[] = GuildRoleStore?.getSortedRoles?.(guildId) ?? [];
+    const roleMap: Record<string, any> = {};
+    for (const r of roles) roleMap[r.id] = r;
+
+    const overwrites: any[] = parsePermissionOverwrites(channel.permissionOverwrites);
+
+    const roleOverwrites = overwrites.filter((ow: any) => ow.type === 0);
+    const memberOverwrites = overwrites.filter((ow: any) => ow.type === 1);
+
+    return (
+        <ActionSheet>
+            <SheetHeader title={`#${channel.name}`} onClose={() => hideSheet("permissionviewer-channel-" + channelId)} />
+            <ScrollView style={{ flex: 1 }}>
+                {roleOverwrites.length === 0 && memberOverwrites.length === 0 && (
+                    <View style={{ padding: 16, alignItems: "center" }}>
+                        <Text variant="text-md/medium">No custom permissions</Text>
+                        <Text variant="text-sm/medium" color="text-muted" style={{ marginTop: 4 }}>
+                            This channel uses the server's default permissions
+                        </Text>
+                    </View>
+                )}
+                {roleOverwrites.length > 0 && (
+                    <View>
+                        <Text variant="text-sm/bold" color="text-muted" style={{ paddingHorizontal: 16, paddingTop: 16, paddingBottom: 4, textTransform: "uppercase", letterSpacing: 0.8 }}>
+                            Roles ({roleOverwrites.length})
+                        </Text>
+                        {roleOverwrites.map((ow: any) => {
+                            const role = roleMap[ow.id];
+                            const name = role?.name ?? "Unknown role";
+                            const color = roleColorHex(role);
+                            const { allowed, denied } = getPermsFromOverwrite(ow);
+                            return (
+                                <View key={ow.id} style={{ paddingHorizontal: 16, paddingVertical: 10, borderBottomWidth: 0.5, borderBottomColor: semanticColors.BACKGROUND_MODIFIER_ACCENT }}>
+                                    <Text variant="text-md/semibold" style={color ? { color } : {}}>{name}</Text>
+                                    {allowed.length > 0 && (
+                                        <View style={{ flexDirection: "row", flexWrap: "wrap", marginTop: 4 }}>
+                                            {allowed.map(p => (
+                                                <View key={p} style={{ backgroundColor: hexToRgba(rawColors.GREEN_360, 0.15), borderRadius: 4, paddingHorizontal: 6, paddingVertical: 2, marginRight: 4, marginBottom: 4 }}>
+                                                    <Text variant="text-xs/medium" style={{ color: rawColors.GREEN_360 }}>{formatPermName(p)}</Text>
+                                                </View>
+                                            ))}
+                                        </View>
+                                    )}
+                                    {denied.length > 0 && (
+                                        <View style={{ flexDirection: "row", flexWrap: "wrap", marginTop: 4 }}>
+                                            {denied.map(p => (
+                                                <View key={p} style={{ backgroundColor: hexToRgba(rawColors.RED_400, 0.15), borderRadius: 4, paddingHorizontal: 6, paddingVertical: 2, marginRight: 4, marginBottom: 4 }}>
+                                                    <Text variant="text-xs/medium" style={{ color: rawColors.RED_400 }}>{formatPermName(p)}</Text>
+                                                </View>
+                                            ))}
+                                        </View>
+                                    )}
+                                    {allowed.length === 0 && denied.length === 0 && (
+                                        <Text variant="text-sm/medium" color="text-muted" style={{ marginTop: 4 }}>No changes</Text>
+                                    )}
+                                </View>
+                            );
+                        })}
+                    </View>
+                )}
+                {memberOverwrites.length > 0 && (
+                    <View>
+                        <Text variant="text-sm/bold" color="text-muted" style={{ paddingHorizontal: 16, paddingTop: 16, paddingBottom: 4, textTransform: "uppercase", letterSpacing: 0.8 }}>
+                            Members ({memberOverwrites.length})
+                        </Text>
+                        {memberOverwrites.map((ow: any) => {
+                            const userId = ow.id;
+                            const member = GuildMemberStore?.getMember?.(guildId, userId);
+                            const user = member?.user ?? UserStore?.getUser?.(userId);
+                            const name = member?.nick ?? user?.globalName ?? user?.username ?? `User ${userId.slice(0, 6)}`;
+                            const avatarUrl = user?.getAvatarURL?.(true, 64) ?? `https://cdn.discordapp.com/embed/avatars/${Number((BigInt(userId) >> 22n) % 6n)}.png`;
+                            const { allowed, denied } = getPermsFromOverwrite(ow);
+                            return (
+                                <Pressable key={ow.id} onPress={() => showUserProfile?.({ userId: ow.id })} style={({ pressed }) => ({ paddingHorizontal: 16, paddingVertical: 10, borderBottomWidth: 0.5, borderBottomColor: semanticColors.BACKGROUND_MODIFIER_ACCENT, backgroundColor: pressed ? semanticColors.BACKGROUND_MODIFIER_HOVER : "transparent" })}>
+                                    <View style={{ flexDirection: "row", alignItems: "center", marginBottom: 4 }}>
+                                        {avatarUrl && <Image source={{ uri: avatarUrl }} style={{ width: 20, height: 20, borderRadius: 10, marginRight: 8 }} />}
+                                        <Text variant="text-md/semibold">{name}</Text>
+                                    </View>
+                                    {allowed.length > 0 && (
+                                        <View style={{ flexDirection: "row", flexWrap: "wrap", marginTop: 4 }}>
+                                            {allowed.map(p => (
+                                                <View key={p} style={{ backgroundColor: hexToRgba(rawColors.GREEN_360, 0.15), borderRadius: 4, paddingHorizontal: 6, paddingVertical: 2, marginRight: 4, marginBottom: 4 }}>
+                                                    <Text variant="text-xs/medium" style={{ color: rawColors.GREEN_360 }}>{formatPermName(p)}</Text>
+                                                </View>
+                                            ))}
+                                        </View>
+                                    )}
+                                    {denied.length > 0 && (
+                                        <View style={{ flexDirection: "row", flexWrap: "wrap", marginTop: 4 }}>
+                                            {denied.map(p => (
+                                                <View key={p} style={{ backgroundColor: hexToRgba(rawColors.RED_400, 0.15), borderRadius: 4, paddingHorizontal: 6, paddingVertical: 2, marginRight: 4, marginBottom: 4 }}>
+                                                    <Text variant="text-xs/medium" style={{ color: rawColors.RED_400 }}>{formatPermName(p)}</Text>
+                                                </View>
+                                            ))}
+                                        </View>
+                                    )}
+                                    {allowed.length === 0 && denied.length === 0 && (
+                                        <Text variant="text-sm/medium" color="text-muted" style={{ marginTop: 4 }}>No changes</Text>
+                                    )}
+                                </Pressable>
+                            );
+                        })}
+                    </View>
+                )}
+                <View style={{ height: 80 }} />
+            </ScrollView>
+        </ActionSheet>
+    );
+}

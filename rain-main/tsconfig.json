@@ -1,0 +1,39 @@
+{
+    "exclude": [
+        "dist"
+    ],
+    "compilerOptions": {
+        "strict": true,
+        "paths": {
+            // Just to discourage from consuming the module directly
+            "sublimation": ["./shims/emptyModule"],
+
+            "@rain/*": ["./src/rain/*"],
+            "@lib": ["./src/lib"],
+            "@lib/*": ["./src/lib/*"],
+            "@metro": ["./src/metro"],
+            "@metro/*": ["./src/metro/*"],
+            "@types": ["./src/lib/utils/types.ts"],
+            "@assets": ["./src/assets"],
+            "@assets/*": ["./src/assets/*"],
+            "@plugins": ["./src/plugins"],
+            "@plugins/*": ["./src/plugins/*"],
+            "@api": ["./src/api"],
+            "@api/*": ["./src/api/*"],
+            "@i18n": ["./src/rain/i18n"],
+            "@i18n/*": ["./src/rain/i18n/*"]
+        },
+        "module": "esnext",
+        "moduleResolution": "bundler",
+        "resolveJsonModule": true,
+        "allowJs": true,
+        "checkJs": true,
+        "jsx": "react-jsx",
+        "target": "esnext",
+
+        "skipLibCheck": true,
+        "declaration": true,
+        "emitDeclarationOnly": true,
+        "stripInternal": true
+    }
+}

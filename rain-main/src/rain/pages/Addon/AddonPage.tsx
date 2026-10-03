@@ -1,0 +1,313 @@
+import { findAssetId } from "@api/assets";
+import { useSettings } from "@api/settings";
+import { dismissAlert, openAlert } from "@api/ui/alerts";
+import { ErrorBoundary, Search } from "@api/ui/components";
+import { showSheet } from "@api/ui/sheets";
+import { Strings } from "@i18n";
+import isValidHttpUrl from "@lib/utils/isValidHttpUrl";
+import { clipboard, NavigationNative } from "@metro/common";
+import { ActionSheet, AlertActionButton, AlertModal, Button, FlashList, FloatingActionButton, HelpMessage, IconButton, Stack, TableRadioGroup, TableRadioRow, TableRowGroup, TableSwitchRow, Text, TextInput, useSafeAreaInsets } from "@metro/common/components";
+import { isNotNil } from "es-toolkit";
+import fuzzysort from "fuzzysort";
+import { ComponentType, ReactNode, useCallback, useEffect, useMemo } from "react";
+import * as React from "react";
+import { Image, ScrollView, View } from "react-native";
+
+import { CardWrapper, CompactCardWrapper } from "./AddonCard";
+
+type SearchKeywords<T> = Array<string | ((obj: T & {}) => string)>;
+
+interface AddonPageProps<T extends object, I = any> {
+    title: string;
+    items: I[];
+    searchKeywords: SearchKeywords<T>;
+    sortOptions?: Record<string, (a: T, b: T) => number>;
+    defaultSortKey?: string;
+    filterOptions?: Record<string, (item: T) => boolean>;
+    defaultFilterKey?: string;
+    resolveItem?: (value: I) => T | undefined;
+    installBrowserAction?: {
+        label?: string;
+        // Ignored when onPress is defined!
+        fetchFn?: (url: string) => Promise<void>;
+        onPress?: () => void;
+    };
+    installAction?: {
+        label?: string;
+        // Ignored when onPress is defined!
+        fetchFn?: (url: string) => Promise<void>;
+        onPress?: () => void;
+    };
+    safeModeHint?: {
+        message?: string;
+        footer?: ReactNode;
+    };
+
+    OptionsActionSheetComponent?: ComponentType<any>;
+
+    CardComponent: ComponentType<CardWrapper<T> | CompactCardWrapper<T>>;
+    compact?: boolean;
+    ListHeaderComponent?: ComponentType<{ compact?: boolean }>;
+    ListFooterComponent?: ComponentType<any>;
+}
+
+function InputAlert(props: { label: string, fetchFn: (url: string) => Promise<void>; }) {
+    const [value, setValue] = React.useState("");
+    const [error, setError] = React.useState("");
+    const [isFetching, setIsFetching] = React.useState(false);
+
+    function onConfirmWrapper() {
+        setIsFetching(true);
+
+        props.fetchFn(value)
+            .then(() => dismissAlert("AddonInputAlert"))
+            .catch((e: unknown) => e instanceof Error ? setError(e.message) : String(e))
+            .finally(() => setIsFetching(false));
+    }
+
+    return <AlertModal
+        title={props.label}
+        content={Strings.SOURCE_URL_PROMPT}
+        extraContent={
+            <Stack style={{ marginTop: -12 }}>
+                <TextInput
+                    autoFocus={true}
+                    isClearable={true}
+                    value={value}
+                    onChange={(v: string) => {
+                        setValue(v);
+                        if (error) setError("");
+                    }}
+                    returnKeyType="done"
+                    onSubmitEditing={onConfirmWrapper}
+                    state={error ? "error" : undefined}
+                    errorMessage={error || undefined}
+                />
+                <ScrollView
+                    horizontal={true}
+                    showsHorizontalScrollIndicator={false}
+                    style={{ gap: 8 }}
+                >
+                    <Button
+                        size="sm"
+                        variant="tertiary"
+                        text={Strings.IMPORT_FROM_CLIPBOARD}
+                        icon={findAssetId("ClipboardListIcon")}
+                        onPress={() => clipboard.getString().then((str: string) => setValue(str))}
+                    />
+                </ScrollView>
+            </Stack>
+        }
+        actions={
+            <Stack>
+                {/* Manual button as we don't want alert to immediately dismiss when we tap on it */}
+                <Button
+                    loading={isFetching}
+                    text={Strings.INSTALL}
+                    variant="primary"
+                    disabled={!value || !isValidHttpUrl(value)}
+                    onPress={onConfirmWrapper}
+                />
+                <AlertActionButton
+                    disabled={isFetching}
+                    text={Strings.CANCEL}
+                    variant="secondary"
+                />
+            </Stack>
+        }
+    />;
+}
+
+
+export default function AddonPage<T extends object>({ CardComponent, ...props }: AddonPageProps<T>) {
+    const settings = useSettings();
+    const [search, setSearch] = React.useState("");
+    const [compact, setCompact] = React.useState(settings.compactMode ?? false);
+    const [sortFn, setSortFn] = React.useState<((a: T, b: T) => number) | null>(() => props.defaultSortKey && props.sortOptions ? props.sortOptions[props.defaultSortKey] : null);
+    const [selectedSortKey, setSelectedSortKey] = React.useState(props.defaultSortKey || "");
+    const [activeFilterKeys, setActiveFilterKeys] = React.useState<string[]>(props.defaultFilterKey ? [props.defaultFilterKey] : []);
+    const { bottom: bottomInset } = useSafeAreaInsets();
+    const { right: rightInset } = useSafeAreaInsets();
+    const navigation = NavigationNative.useNavigation();
+
+    const filterFn = useMemo(() => {
+        if (activeFilterKeys.length === 0) return null;
+        return (item: T) => activeFilterKeys.every(key => props.filterOptions![key](item));
+    }, [activeFilterKeys, props.filterOptions]);
+
+    useEffect(() => {
+        if (props.OptionsActionSheetComponent) {
+            navigation.setOptions({
+                headerRight: () => <IconButton
+                    size="sm"
+                    variant="secondary"
+                    icon={findAssetId("MoreHorizontalIcon")}
+                    onPress={() => showSheet("AddonMoreSheet", props.OptionsActionSheetComponent!)}
+                />
+            });
+        }
+    }, [navigation]);
+
+    useEffect(() => {
+        setCompact(settings.compactMode ?? false);
+    }, [settings.compactMode]);
+
+    useEffect(() => {
+        const sortKey = props.defaultSortKey;
+        if (props.sortOptions && sortKey && props.sortOptions[sortKey]) {
+            setSortFn(() => props.sortOptions![sortKey]);
+            setSelectedSortKey(sortKey);
+        }
+    }, [props.sortOptions, props.defaultSortKey]);
+
+    const results = useMemo(() => {
+        let values = props.items;
+        if (props.resolveItem) values = values.map(props.resolveItem).filter(isNotNil);
+
+        let items = values.filter(i => isNotNil(i) && typeof i === "object") as T[];
+
+        if (filterFn) {
+            items = items.filter(filterFn);
+        }
+
+        if (!search && sortFn) items.sort(sortFn);
+
+        return fuzzysort.go(search, items, { keys: props.searchKeywords, all: true });
+    }, [props.items, sortFn, filterFn, search]);
+
+    const onInstallPress = useCallback(() => {
+        if (!props.installAction) return () => { };
+        const { label, onPress, fetchFn } = props.installAction;
+        if (fetchFn) {
+            openAlert("AddonInputAlert", <InputAlert label={label ?? Strings.INSTALL} fetchFn={fetchFn} />);
+        } else {
+            onPress?.();
+        }
+    }, [props.installAction]);
+
+    const onInstallBrowserPress = useCallback(() => {
+        if (!props.installBrowserAction) return () => { };
+        const { label, onPress, fetchFn } = props.installBrowserAction;
+        if (fetchFn) {
+            openAlert("AddonInputAlert", <InputAlert label={label ?? Strings.INSTALL} fetchFn={fetchFn} />);
+        } else {
+            onPress?.();
+        }
+    }, [props.installBrowserAction]);
+
+    const SortAndFilterActionSheet = React.useCallback(({ sortKey, filterKeys }: { sortKey: string; filterKeys: string[] }) => (
+        <ActionSheet>
+            {props.sortOptions && (
+                <TableRadioGroup
+                    title="Sort By"
+                    value={sortKey}
+                    onChange={(value: string) => {
+                        setSelectedSortKey(value);
+                        setSortFn(() => props.sortOptions![value]);
+                        showSheet("SortAndFilterActionSheet", SortAndFilterActionSheet, { sortKey: value, filterKeys });
+                    }}
+                >
+                    {Object.keys(props.sortOptions).map(key => (
+                        <TableRadioRow key={key} label={key} value={key} />
+                    ))}
+                </TableRadioGroup>
+            )}
+            {props.filterOptions && (
+                <TableRowGroup title="Filter By">
+                    <TableSwitchRow
+                        label="Hide Core Plugins"
+                        value={filterKeys.length > 0}
+                        onValueChange={value => {
+                            const key = Object.keys(props.filterOptions!)[0];
+                            const newFilterKeys = value ? [key] : [];
+                            setActiveFilterKeys(newFilterKeys);
+                            showSheet("SortAndFilterActionSheet", SortAndFilterActionSheet, { sortKey, filterKeys: newFilterKeys });
+                        }}
+                    />
+                </TableRowGroup>
+            )}
+
+        </ActionSheet>
+    ), [props.sortOptions, props.filterOptions]);
+
+    const headerElement = (
+        <View style={{ paddingBottom: 8 }}>
+            {settings.safeMode && <View style={{ marginBottom: 10 }}>
+                <HelpMessage messageType={0}>
+                    {props.safeModeHint?.message}
+                </HelpMessage>
+                {props.safeModeHint?.footer}
+            </View>}
+            <View style={{ flexDirection: "row", gap: 8 }}>
+                <Search
+                    style={{ flexGrow: 1 }}
+                    isRound={!!props.sortOptions || !!props.filterOptions}
+                    onChangeText={v => setSearch(v)}
+                />
+                {(props.sortOptions || props.filterOptions) && <IconButton
+                    icon={findAssetId("ArrowsUpDownIcon")}
+                    variant="tertiary"
+                    disabled={!!search}
+                    onPress={() => showSheet("SortAndFilterActionSheet", SortAndFilterActionSheet, { sortKey: selectedSortKey, filterKeys: activeFilterKeys })}
+                />}
+            </View>
+            {props.ListHeaderComponent && <props.ListHeaderComponent compact={compact} />}
+        </View>
+    );
+
+    if (results.length === 0 && !search) {
+        return <View style={{ gap: 32, flexGrow: 1.5, justifyContent: "center", alignItems: "center" }}>
+            <View style={{ gap: 8, alignItems: "center" }}>
+                <Image source={findAssetId("empty_quick_switcher")!} />
+                <Text variant="text-lg/semibold" color="text-strong">
+                    {Strings.NOTHING_TO_SEE}
+                </Text>
+            </View>
+            {props.installAction && <Button
+                size="lg"
+                icon={findAssetId("CompassIcon")}
+                // @ts-expect-error
+                text={props.installBrowserAction.label ?? Strings.INSTALL}
+                onPress={onInstallBrowserPress}
+            />}
+            {props.installAction && <Button
+                size="lg"
+                icon={findAssetId("DownloadIcon")}
+                text={props.installAction.label ?? Strings.INSTALL}
+                onPress={onInstallPress}
+            />}
+        </View>;
+    }
+
+    return (
+        <ErrorBoundary>
+            <FlashList
+                data={results}
+                extraData={search}
+                estimatedItemSize={compact ? 72 : 120}
+                ListHeaderComponent={headerElement}
+                ListEmptyComponent={() => <View style={{ gap: 12, padding: 12, alignItems: "center" }}>
+                    <Image source={findAssetId("devices_not_found")!} />
+                    <Text variant="text-lg/semibold" color="text-normal">
+                        {Strings.COULD_NOT_FIND}
+                    </Text>
+                </View>}
+                contentContainerStyle={{ padding: 8, paddingHorizontal: 12, paddingBottom: 90 }}
+                ItemSeparatorComponent={() => <View style={{ height: 8 }} />}
+                ListFooterComponent={props.ListFooterComponent}
+                renderItem={({ item }: any) => <CardComponent item={item.obj} result={item} compact={compact} />}
+            />
+            {props.installBrowserAction && <FloatingActionButton
+                positionBottom={bottomInset + 8}
+                icon={findAssetId("CompassIcon")}
+                onPress={onInstallBrowserPress}
+            />}
+            {props.installAction && <FloatingActionButton
+                positionBottom={bottomInset + 8}
+                positionRight={rightInset + 86}
+                icon={findAssetId("PlusLargeIcon")}
+                onPress={onInstallPress}
+            />}
+        </ErrorBoundary>
+    );
+}
