@@ -1,5 +1,5 @@
 <div align="center">
- <img height="150" height="150" alt="Rain logo" src="src/assets/sasusaku ♡.jpeg" />
+ <img height="150" height="150" alt="Rain logo" src="src/assets/rain.png" />
 </div>
 
 <div align="center">
