@@ -2,14 +2,24 @@ name: Build Tweak
 on: [push, workflow_dispatch]
 jobs:
   build:
-    runs-on: macos-latest  # أو ubuntu-latest
+    runs-on: macos-latest
+    defaults:
+      run:
+        working-directory: raintweak
     steps:
       - uses: actions/checkout@v4
-      - uses: Randomblock1/theos-action@v1
-      - name: Build
-        run: make package
+
+      - name: Setup Theos
+        uses: Randomblock1/theos-action@v1
+        with:
+          theos-dir: ${{ github.workspace }}/theos
+
+      - name: Build DEB
+        run: make package FINALPACKAGE=1
+
       - name: Upload DEB
         uses: actions/upload-artifact@v4
         with:
           name: tweak-deb
-          path: ./packages/*.deb
+          path: raintweak/packages/*.deb
+          if-no-files-found: error
